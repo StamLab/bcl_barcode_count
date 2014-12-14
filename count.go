@@ -17,13 +17,13 @@ func bases_to_barcodes(bases [][]byte) []string{
 	barcodes := make([]string, num_clusters)
 
 	// TODO: This has got to be really slow, right?
-	for cluster:=0; cluster<num_clusters; cluster++ {
+	for cluster_idx := range bases[0] {
 
 		barcode := make([]byte, num_bases)
-		for i:=0; i<num_bases; i++ {
-			barcode = append(barcode, bases[i][cluster] )
+		for _, base := range bases{
+			barcode = append(barcode, base[cluster_idx] )
 		}
-		barcodes[cluster] = string(barcode)
+		barcodes[cluster_idx] = string(barcode)
 	}
 
 	return barcodes
@@ -33,11 +33,11 @@ func clusters_to_bases(clusters []byte) []byte{
 	decode := [4]byte{'A', 'C', 'G', 'T'}
 	bases := make([]byte, len(clusters))
 
-	for i := 0; i < len(clusters); i++ {
-		if (clusters[i] == 0) {
+	for i, cluster := range clusters{
+		if (cluster == 0) {
 			bases[i] = 'N'
 		} else {
-			bases[i] = decode[ clusters[i] & 0x3 ]
+			bases[i] = decode[ cluster & 0x3 ]
 		}
 	}
 
@@ -86,9 +86,8 @@ func bcl_to_clusters(filename string) []byte{
 func tally_barcodes(barcodes []string) map[string]int {
 	tally := make(map[string]int)
 
-	for i:=0; i < len(barcodes); i++ {
-		b := barcodes[i]
-		tally[b]++
+	for _, barcode := range barcodes{
+		tally[barcode]++
 	}
 
 	return tally
@@ -101,11 +100,9 @@ func main() {
 
 	bases := make([][]byte, len(files))
 
-	for i:=0; i<len(files); i++ {
-		file := files[i]
+	for i, file := range files {
 		clusters :=	bcl_to_clusters(file)
 		bases[i] = clusters_to_bases( clusters )
-
 	}
 
 	barcodes := bases_to_barcodes(bases)
