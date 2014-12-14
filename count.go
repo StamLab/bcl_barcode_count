@@ -83,6 +83,17 @@ func bcl_to_clusters(filename string) []byte{
 	return(clusters)
 }
 
+func tally_barcodes(barcodes []string) map[string]int {
+	tally := make(map[string]int)
+
+	for i:=0; i < len(barcodes); i++ {
+		b := barcodes[i]
+		tally[b]++
+	}
+
+	return tally
+}
+
 func main() {
 
 	flag.Parse()
@@ -99,7 +110,9 @@ func main() {
 
 	barcodes := bases_to_barcodes(bases)
 
-	for i :=0; i<len(barcodes); i++ {
-		fmt.Println(barcodes[i])
+	tally := tally_barcodes(barcodes)
+
+	for barcode, count := range tally {
+		fmt.Println(barcode, count)
 	}
 }
