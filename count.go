@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"os"
 	"encoding/binary"
+	"flag"
 )
 
 
@@ -14,8 +15,6 @@ func bases_to_barcodes(bases [][]byte) []string{
 	num_clusters := len(bases[0])
 
 	barcodes := make([]string, num_clusters)
-
-	//fmt.Println("num Bases/Clusters:", num_bases, num_clusters)
 
 	// TODO: This has got to be really slow, right?
 	for cluster:=0; cluster<num_clusters; cluster++ {
@@ -66,7 +65,6 @@ func bcl_to_clusters(filename string) []byte{
 
 	clusters := make([]byte, count)
 
-
 	sum := 0
 	for {
 		bytes_read, read_err := reader.Read(clusters[sum:])
@@ -87,14 +85,13 @@ func bcl_to_clusters(filename string) []byte{
 
 func main() {
 
-	cycles := [16]int{ 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52 }
-	//cycles := [3]int{ 37, 38, 39}
+	flag.Parse()
+	files := flag.Args()
 
-	bases := make([][]byte, len(cycles))
-	for i:=0; i<len(cycles); i++ {
+	bases := make([][]byte, len(files))
 
-		fmt.Println("File:", i)
-		file := fmt.Sprintf("%04d.bcl.bgzf", cycles[i])
+	for i:=0; i<len(files); i++ {
+		file := files[i]
 		clusters :=	bcl_to_clusters(file)
 		bases[i] = clusters_to_bases( clusters )
 
@@ -102,7 +99,6 @@ func main() {
 
 	barcodes := bases_to_barcodes(bases)
 
-	//fmt.Println("Barcodes:", barcodes[0:10])
 	for i :=0; i<len(barcodes); i++ {
 		fmt.Println(barcodes[i])
 	}
