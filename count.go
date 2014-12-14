@@ -6,6 +6,7 @@ import (
 	"os"
 	"encoding/binary"
 	"flag"
+	"sort"
 )
 
 
@@ -17,6 +18,8 @@ func bases_to_barcodes(bases [][]byte) []string{
 	barcodes := make([]string, num_clusters)
 
 	// TODO: This has got to be really slow, right?
+	// Turns out it runs quick anyways.
+	// Could be optimized but doesn't need it.
 	for cluster_idx := range bases[0] {
 
 		barcode := make([]byte, num_bases)
@@ -93,6 +96,29 @@ func tally_barcodes(barcodes []string) map[string]int {
 	return tally
 }
 
+type Pair struct {
+  Key string
+  Value int
+}
+// A slice of Pairs that implements sort.Interface to sort by Value.
+type PairList []Pair
+func (p PairList) Swap(i, j int) { p[i], p[j] = p[j], p[i] }
+func (p PairList) Len() int { return len(p) }
+func (p PairList) Less(i, j int) bool { return p[i].Value < p[j].Value }
+
+// A function to turn a map into a PairList, then sort and return it.
+func sortMapByValueDescending(m map[string]int) PairList {
+	p := make(PairList, len(m))
+	i := 0
+	for k, v := range m {
+		p[i] = Pair{k, v}
+    i++
+	}
+	sort.Sort(sort.Reverse(p))
+	return p
+}
+
+
 func main() {
 
 	flag.Parse()
@@ -109,7 +135,7 @@ func main() {
 
 	tally := tally_barcodes(barcodes)
 
-	for barcode, count := range tally {
-		fmt.Println(barcode, count)
+	for _, pair := range sortMapByValueDescending(tally) {
+		fmt.Println(pair.Key, pair.Value)
 	}
 }
