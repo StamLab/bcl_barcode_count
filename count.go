@@ -20,10 +20,9 @@ func bases_to_barcodes(bases [][]byte) []string {
 	// Turns out it runs quick anyways.
 	// Could be optimized but doesn't need it.
 	for cluster_idx := range bases[0] {
-
 		barcode := make([]byte, num_bases)
-		for _, base := range bases {
-			barcode = append(barcode, base[cluster_idx])
+		for i, base := range bases {
+			barcode[i] = base[cluster_idx]
 		}
 		barcodes[cluster_idx] = string(barcode)
 	}
@@ -53,16 +52,16 @@ func bcl_to_clusters(filenames []string) []byte {
 	for _, filename := range filenames {
 		// TODO: Error check for real
 		file, err := os.Open(filename)
+		defer file.Close()
 		if err != nil {
 			panic(err)
 		}
-		defer file.Close()
 
 		reader, gzip_err := gzip.NewReader(file)
+		defer reader.Close()
 		if gzip_err != nil {
 			panic(gzip_err)
 		}
-		defer reader.Close()
 
 		data := make([]byte, 4)
 		reader.Read(data)
@@ -77,7 +76,6 @@ func bcl_to_clusters(filenames []string) []byte {
 			if read_err != nil || bytes_read == 0 {
 				break
 			}
-
 		}
 
 		if int(count) != int(sum) {
@@ -125,6 +123,20 @@ func sortMapByValueDescending(m map[string]int) PairList {
 	return p
 }
 
+func reportOnFileGroups(fileGroups [][]string) map[string]int {
+	bases := make([][]byte, len(fileGroups))
+
+	for i, files := range fileGroups {
+		clusters := bcl_to_clusters(files)
+		bases[i] = clusters_to_bases(clusters)
+	}
+
+	barcodes := bases_to_barcodes(bases)
+	tally := tally_barcodes(barcodes)
+
+	return tally
+}
+
 func main() {
 
 	currentDir, _ := os.Getwd()
@@ -141,21 +153,25 @@ func main() {
 	var fileGroups [][]string
 	if *next_seq {
 		fileGroups = getNextSeqFiles(*mask, *base_dir)
-	} else if *hi_seq {
-		panic("Sorry, HiSeq processing NYI")
+		tally := reportOnFileGroups(fileGroups)
+		for _, pair := range sortMapByValueDescending(tally) {
+			fmt.Println(pair.Key, pair.Value)
+		}
+		return
 	}
 
-	bases := make([][]byte, len(fileGroups))
-	for i, files := range fileGroups {
-		clusters := bcl_to_clusters(files)
-		bases[i] = clusters_to_bases(clusters)
+	if *hi_seq {
+		lanes := getHiSeqFiles(*mask, *base_dir)
+		for l, fileGroups := range lanes {
+			fmt.Printf("----Lane %d-----\n", l+1)
+			tally := reportOnFileGroups(fileGroups)
+			for _, pair := range sortMapByValueDescending(tally) {
+				fmt.Println(pair.Key, pair.Value)
+			}
+
+		}
+
+		return
 	}
 
-	barcodes := bases_to_barcodes(bases)
-
-	tally := tally_barcodes(barcodes)
-
-	for _, pair := range sortMapByValueDescending(tally) {
-		fmt.Println(pair.Key, pair.Value)
-	}
 }
