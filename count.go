@@ -9,45 +9,36 @@ import (
 	"sort"
 )
 
-func bases_to_barcodes(bases [][]byte) []string {
+const (
+	readChunkSize = 40000
+)
 
-	num_bases := len(bases)
-	num_clusters := len(bases[0])
-
-	barcodes := make([]string, num_clusters)
-
-	// TODO: This has got to be really slow, right?
-	// Turns out it runs quick anyways.
-	// Could be optimized but doesn't need it.
-	for cluster_idx := range bases[0] {
-		barcode := make([]byte, num_bases)
-		for i, base := range bases {
-			barcode[i] = base[cluster_idx]
-		}
-		barcodes[cluster_idx] = string(barcode)
-	}
-
-	return barcodes
-}
-
-func clusters_to_bases(clusters []byte) []byte {
+func clustersToBarcodeMap(inputs []chan byte) map[string]int {
 	decode := [4]byte{'A', 'C', 'G', 'T'}
-	bases := make([]byte, len(clusters))
-
-	for i, cluster := range clusters {
-		if cluster == 0 {
-			bases[i] = 'N'
-		} else {
-			bases[i] = decode[cluster&0x3]
+	tally := make(map[string]int)
+	barcodeLength := len(inputs)
+	for {
+		barcode := make([]byte, barcodeLength)
+		channelEmpty := false
+		for i, c := range inputs {
+			cluster, okay := <-c
+			channelEmpty = !okay
+			if cluster == 0 {
+				barcode[i] = 'N'
+			} else {
+				barcode[i] = decode[cluster&0x3]
+			}
 		}
+		if channelEmpty {
+			break
+		}
+		tally[string(barcode)]++
 	}
 
-	return bases
+	return tally
 }
 
-func bcl_to_clusters(filenames []string) []byte {
-
-	allClusters := make([]byte, 1)
+func bcl_to_clusters(filenames []string, output chan byte) {
 
 	for _, filename := range filenames {
 		// TODO: Error check for real
@@ -64,17 +55,21 @@ func bcl_to_clusters(filenames []string) []byte {
 		}
 
 		data := make([]byte, 4)
+
 		reader.Read(data)
 		count := binary.LittleEndian.Uint32(data)
 
-		clusters := make([]byte, count)
+		clusters := make([]byte, readChunkSize)
 
 		sum := 0
 		for {
-			bytes_read, read_err := reader.Read(clusters[sum:])
+			bytes_read, read_err := reader.Read(clusters)
 			sum += bytes_read
 			if read_err != nil || bytes_read == 0 {
 				break
+			}
+			for i := 0; i < bytes_read; i++ {
+				output <- clusters[i]
 			}
 		}
 
@@ -83,20 +78,9 @@ func bcl_to_clusters(filenames []string) []byte {
 		}
 
 		reader.Close()
-		allClusters = append(allClusters, clusters...)
-	}
-	return (allClusters)
-
-}
-
-func tally_barcodes(barcodes []string) map[string]int {
-	tally := make(map[string]int)
-
-	for _, barcode := range barcodes {
-		tally[barcode]++
 	}
 
-	return tally
+	close(output)
 }
 
 type Pair struct {
@@ -124,15 +108,14 @@ func sortMapByValueDescending(m map[string]int) PairList {
 }
 
 func reportOnFileGroups(fileGroups [][]string) map[string]int {
-	bases := make([][]byte, len(fileGroups))
 
+	comms := make([]chan byte, len(fileGroups))
 	for i, files := range fileGroups {
-		clusters := bcl_to_clusters(files)
-		bases[i] = clusters_to_bases(clusters)
+		comms[i] = make(chan byte, readChunkSize)
+		go bcl_to_clusters(files, comms[i])
 	}
 
-	barcodes := bases_to_barcodes(bases)
-	tally := tally_barcodes(barcodes)
+	tally := clustersToBarcodeMap(comms)
 
 	return tally
 }
