@@ -18,6 +18,7 @@ func clustersToBarcodeMap(inputs []chan []byte) map[string]int {
 	tally := make(map[string]int)
 	barcodeLength := len(inputs)
 	for {
+		numClusters := 0
 		barcodes := make([][]byte, readChunkSize)
 		for cluster_idx := 0; cluster_idx < readChunkSize; cluster_idx++ {
 			barcodes[cluster_idx] = make([]byte, barcodeLength)
@@ -26,6 +27,7 @@ func clustersToBarcodeMap(inputs []chan []byte) map[string]int {
 		for i, c := range inputs {
 			bases, okay := <-c
 			channelEmpty = !okay
+			numClusters = len(bases)
 			for idx, base := range bases {
 				barcodes[idx][i] = base
 			}
@@ -33,7 +35,7 @@ func clustersToBarcodeMap(inputs []chan []byte) map[string]int {
 		if channelEmpty {
 			break
 		}
-		for _, barcode := range barcodes {
+		for _, barcode := range barcodes[:numClusters] {
 			tally[string(barcode)]++
 		}
 	}
@@ -63,43 +65,46 @@ func clustersToBases(input chan []byte, output chan []byte) {
 	close(output)
 }
 
+func bclFileToClusters(filename string, output chan []byte) {
+
+	// TODO: Error check for real
+	file, err := os.Open(filename)
+	defer file.Close()
+	if err != nil {
+		panic(err)
+	}
+
+	reader, gzip_err := gzip.NewReader(file)
+	defer reader.Close()
+	if gzip_err != nil {
+		panic(gzip_err)
+	}
+
+	data := make([]byte, 4)
+
+	reader.Read(data)
+	count := binary.LittleEndian.Uint32(data)
+
+	sum := 0
+	for {
+		clusters := make([]byte, readChunkSize)
+		bytes_read, read_err := reader.Read(clusters)
+		sum += bytes_read
+		if read_err != nil || bytes_read == 0 {
+			break
+		}
+		output <- clusters[:bytes_read]
+	}
+
+	if int(count) != int(sum) {
+		panic(fmt.Sprintf("Expected %d clusters, found %d", count, sum))
+	}
+}
+
 func bcl_to_clusters(filenames []string, output chan []byte) {
 
 	for _, filename := range filenames {
-		// TODO: Error check for real
-		file, err := os.Open(filename)
-		defer file.Close()
-		if err != nil {
-			panic(err)
-		}
-
-		reader, gzip_err := gzip.NewReader(file)
-		defer reader.Close()
-		if gzip_err != nil {
-			panic(gzip_err)
-		}
-
-		data := make([]byte, 4)
-
-		reader.Read(data)
-		count := binary.LittleEndian.Uint32(data)
-
-		sum := 0
-		for {
-			clusters := make([]byte, readChunkSize)
-			bytes_read, read_err := reader.Read(clusters)
-			sum += bytes_read
-			if read_err != nil || bytes_read == 0 {
-				break
-			}
-			output <- clusters[:bytes_read]
-		}
-
-		if int(count) != int(sum) {
-			panic(fmt.Sprintf("Expected %d clusters, found %d", count, sum))
-		}
-
-		reader.Close()
+		bclFileToClusters(filename, output)
 	}
 
 	close(output)
@@ -129,7 +134,7 @@ func sortMapByValueDescending(m map[string]int) PairList {
 	return p
 }
 
-func reportOnFileGroups(fileGroups [][]string) map[string]int {
+func reportOnFileGroups(fileGroups [][]string, output chan map[string]int) {
 
 	clusterComms := make([]chan []byte, len(fileGroups))
 	baseComms := make([]chan []byte, len(fileGroups))
@@ -141,8 +146,8 @@ func reportOnFileGroups(fileGroups [][]string) map[string]int {
 	}
 
 	tally := clustersToBarcodeMap(baseComms)
-
-	return tally
+	output <- tally
+	close(output)
 }
 
 func printTally(tally map[string]int) {
@@ -173,9 +178,15 @@ func main() {
 		panic("Must specify either --nextseq or --hiseq")
 	}
 
+	tallyComms := make([]chan map[string]int, len(lanes))
 	for l, fileGroups := range lanes {
+		tallyComms[l] = make(chan map[string]int)
+		go reportOnFileGroups(fileGroups, tallyComms[l])
+	}
+
+	for l := range lanes {
 		fmt.Printf("----Lane %d-----\n", l+1)
-		tally := reportOnFileGroups(fileGroups)
+		tally := <-tallyComms[l]
 		printTally(tally)
 	}
 
