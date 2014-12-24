@@ -145,6 +145,12 @@ func reportOnFileGroups(fileGroups [][]string) map[string]int {
 	return tally
 }
 
+func printTally(tally map[string]int) {
+	for _, pair := range sortMapByValueDescending(tally) {
+		fmt.Println(pair.Key, pair.Value)
+	}
+}
+
 func main() {
 
 	currentDir, _ := os.Getwd()
@@ -158,28 +164,19 @@ func main() {
 
 	maskToIndices(*mask)
 
-	var fileGroups [][]string
+	var lanes [][][]string
 	if *next_seq {
-		fileGroups = getNextSeqFiles(*mask, *base_dir)
-		tally := reportOnFileGroups(fileGroups)
-		for _, pair := range sortMapByValueDescending(tally) {
-			fmt.Println(pair.Key, pair.Value)
-		}
-		return
+		lanes = getNextSeqFiles(*mask, *base_dir)
+	} else if *hi_seq {
+		lanes = getHiSeqFiles(*mask, *base_dir)
+	} else {
+		panic("Must specify either --nextseq or --hiseq")
 	}
 
-	if *hi_seq {
-		lanes := getHiSeqFiles(*mask, *base_dir)
-		for l, fileGroups := range lanes {
-			fmt.Printf("----Lane %d-----\n", l+1)
-			tally := reportOnFileGroups(fileGroups)
-			for _, pair := range sortMapByValueDescending(tally) {
-				fmt.Println(pair.Key, pair.Value)
-			}
-
-		}
-
-		return
+	for l, fileGroups := range lanes {
+		fmt.Printf("----Lane %d-----\n", l+1)
+		tally := reportOnFileGroups(fileGroups)
+		printTally(tally)
 	}
 
 }

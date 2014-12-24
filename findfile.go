@@ -37,7 +37,7 @@ func maskToIndices(mask string) []int {
 	return cycles
 }
 
-func getNextSeqFiles(mask string, basedir string) [][]string {
+func getNextSeqFiles(mask string, basedir string) [][][]string {
 	cycles := maskToIndices(mask)
 	files := make([][]string, len(cycles))
 	for i, c := range cycles {
@@ -49,7 +49,7 @@ func getNextSeqFiles(mask string, basedir string) [][]string {
 
 		}
 	}
-	return files
+	return [][][]string{files}
 }
 
 func getHiSeqFiles(mask string, basedir string) [][][]string {
