@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	readChunkSize = 40000
+	readChunkSize      = 40000 // How many reads to grab at a time
+	maxChunksInChannel = 100   // How many chunks to hold at once
 )
 
 func clustersToBarcodeMap(inputs []chan []byte) map[string]int {
-	decode := [4]byte{'A', 'C', 'G', 'T'}
 	tally := make(map[string]int)
 	barcodeLength := len(inputs)
 	for {
@@ -24,14 +24,10 @@ func clustersToBarcodeMap(inputs []chan []byte) map[string]int {
 		}
 		channelEmpty := false
 		for i, c := range inputs {
-			clusters, okay := <-c
+			bases, okay := <-c
 			channelEmpty = !okay
-			for idx, cluster := range clusters {
-				if cluster == 0 {
-					barcodes[idx][i] = 'N'
-				} else {
-					barcodes[idx][i] = decode[cluster&0x3]
-				}
+			for idx, base := range bases {
+				barcodes[idx][i] = base
 			}
 		}
 		if channelEmpty {
@@ -43,6 +39,28 @@ func clustersToBarcodeMap(inputs []chan []byte) map[string]int {
 	}
 
 	return tally
+}
+
+func clustersToBases(input chan []byte, output chan []byte) {
+	decode := [4]byte{'A', 'C', 'G', 'T'}
+	for {
+		clusters, okay := <-input
+
+		bases := make([]byte, len(clusters))
+		for i, cluster := range clusters {
+			if cluster == 0 {
+				bases[i] = 'N'
+			} else {
+				bases[i] = decode[cluster&0x3]
+			}
+		}
+		output <- bases
+		if !okay {
+			break
+		}
+
+	}
+	close(output)
 }
 
 func bcl_to_clusters(filenames []string, output chan []byte) {
@@ -113,13 +131,16 @@ func sortMapByValueDescending(m map[string]int) PairList {
 
 func reportOnFileGroups(fileGroups [][]string) map[string]int {
 
-	comms := make([]chan []byte, len(fileGroups))
+	clusterComms := make([]chan []byte, len(fileGroups))
+	baseComms := make([]chan []byte, len(fileGroups))
 	for i, files := range fileGroups {
-		comms[i] = make(chan []byte, readChunkSize)
-		go bcl_to_clusters(files, comms[i])
+		clusterComms[i] = make(chan []byte, maxChunksInChannel)
+		baseComms[i] = make(chan []byte, maxChunksInChannel)
+		go bcl_to_clusters(files, clusterComms[i])
+		go clustersToBases(clusterComms[i], baseComms[i])
 	}
 
-	tally := clustersToBarcodeMap(comms)
+	tally := clustersToBarcodeMap(baseComms)
 
 	return tally
 }
