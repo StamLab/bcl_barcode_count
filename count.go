@@ -13,32 +13,39 @@ const (
 	readChunkSize = 40000
 )
 
-func clustersToBarcodeMap(inputs []chan byte) map[string]int {
+func clustersToBarcodeMap(inputs []chan []byte) map[string]int {
 	decode := [4]byte{'A', 'C', 'G', 'T'}
 	tally := make(map[string]int)
 	barcodeLength := len(inputs)
 	for {
-		barcode := make([]byte, barcodeLength)
+		barcodes := make([][]byte, readChunkSize)
+		for cluster_idx := 0; cluster_idx < readChunkSize; cluster_idx++ {
+			barcodes[cluster_idx] = make([]byte, barcodeLength)
+		}
 		channelEmpty := false
 		for i, c := range inputs {
-			cluster, okay := <-c
+			clusters, okay := <-c
 			channelEmpty = !okay
-			if cluster == 0 {
-				barcode[i] = 'N'
-			} else {
-				barcode[i] = decode[cluster&0x3]
+			for idx, cluster := range clusters {
+				if cluster == 0 {
+					barcodes[idx][i] = 'N'
+				} else {
+					barcodes[idx][i] = decode[cluster&0x3]
+				}
 			}
 		}
 		if channelEmpty {
 			break
 		}
-		tally[string(barcode)]++
+		for _, barcode := range barcodes {
+			tally[string(barcode)]++
+		}
 	}
 
 	return tally
 }
 
-func bcl_to_clusters(filenames []string, output chan byte) {
+func bcl_to_clusters(filenames []string, output chan []byte) {
 
 	for _, filename := range filenames {
 		// TODO: Error check for real
@@ -59,18 +66,15 @@ func bcl_to_clusters(filenames []string, output chan byte) {
 		reader.Read(data)
 		count := binary.LittleEndian.Uint32(data)
 
-		clusters := make([]byte, readChunkSize)
-
 		sum := 0
 		for {
+			clusters := make([]byte, readChunkSize)
 			bytes_read, read_err := reader.Read(clusters)
 			sum += bytes_read
 			if read_err != nil || bytes_read == 0 {
 				break
 			}
-			for i := 0; i < bytes_read; i++ {
-				output <- clusters[i]
-			}
+			output <- clusters[:bytes_read]
 		}
 
 		if int(count) != int(sum) {
@@ -109,9 +113,9 @@ func sortMapByValueDescending(m map[string]int) PairList {
 
 func reportOnFileGroups(fileGroups [][]string) map[string]int {
 
-	comms := make([]chan byte, len(fileGroups))
+	comms := make([]chan []byte, len(fileGroups))
 	for i, files := range fileGroups {
-		comms[i] = make(chan byte, readChunkSize)
+		comms[i] = make(chan []byte, readChunkSize)
 		go bcl_to_clusters(files, comms[i])
 	}
 
