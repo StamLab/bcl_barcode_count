@@ -14,21 +14,77 @@ const (
 	maxChunksInChannel = 100   // How many chunks to hold at once
 )
 
-func basesToBarcodeMap(inputs []chan []byte, filterChan chan []byte) map[string]Count {
-	tally := make(map[string]Count)
-	barcodeLength := len(inputs)
+func Min(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
-	// Filter chunk size differs from input chunk size
-	var leftoverFilters []byte
-	var filters []byte
+func basesToBarcodeMap(barcodeChan chan []string, filterChan chan []byte) map[string]Count {
+	tally := make(map[string]Count)
+
 	for {
-		numClusters := 0
+		barcodes, barcodeOpen := <-barcodeChan
+		filters, filterOpen := <-filterChan
+
+		for i := 0; i < len(barcodes); i++ {
+			bc := string(barcodes[i])
+			count := tally[bc]
+			count.Total++
+			count.Pass += int(filters[i])
+			tally[bc] = count
+		}
+
+		if !barcodeOpen || !filterOpen {
+			break
+		}
+	}
+
+	return tally
+}
+
+func syncChannels(barcodeIn chan []string, filterIn chan []byte, barcodeOut chan []string, filterOut chan []byte) {
+	defer close(barcodeOut)
+	defer close(filterOut)
+
+	var barcodes []string
+	var filters []byte
+	barcodeOpen := true
+	filterOpen := true
+	for {
+		if len(barcodes) == 0 {
+			barcodes, barcodeOpen = <-barcodeIn
+		}
+		if len(filters) == 0 {
+			filters, filterOpen = <-filterIn
+		}
+		sendSize := Min(len(barcodes), len(filters))
+
+		barcodeOut <- barcodes[:sendSize]
+		filterOut <- filters[:sendSize]
+
+		barcodes = barcodes[sendSize:]
+		filters = filters[sendSize:]
+
+		if !barcodeOpen || !filterOpen {
+			break
+		}
+	}
+}
+
+func basesToBarcodes(inputs []chan []byte, output chan []string) {
+	barcodeLength := len(inputs)
+	channelEmpty := false
+	defer close(output)
+
+	for {
 		barcodes := make([][]byte, readChunkSize)
 		for cluster_idx := 0; cluster_idx < readChunkSize; cluster_idx++ {
 			barcodes[cluster_idx] = make([]byte, barcodeLength)
 		}
-		channelEmpty := false
 
+		numClusters := 0
 		// Transpose bases into barcodes
 		for i, c := range inputs {
 			bases, okay := <-c
@@ -38,48 +94,16 @@ func basesToBarcodeMap(inputs []chan []byte, filterChan chan []byte) map[string]
 				barcodes[idx][i] = base
 			}
 		}
-
-		numLeftover := len(leftoverFilters)
-		if numLeftover < numClusters {
-			filters, _ = <-filterChan
-		}
-
-		// This is ugly, and can surely be simplified
-		// Match up incoming clusters with leftover filters
-		bound := numLeftover
-		if numClusters < bound {
-			bound = numClusters
-		}
-
-		for i := 0; i < bound; i++ {
-			bc := string(barcodes[i])
-			count := tally[bc]
-			count.Total++
-			count.Pass += int(leftoverFilters[i])
-			tally[bc] = count
-		}
-		// Match up remaining clusters with new filters
-		for i := bound; i < numClusters; i++ {
-			bc := string(barcodes[i])
-			count := tally[bc]
-			count.Total++
-			count.Pass += int(filters[i-numLeftover])
-			tally[bc] = count
-		}
-
-		// Collect any leftovers
-		if numLeftover < numClusters {
-			leftoverFilters = filters[numClusters-numLeftover:]
-		} else {
-			leftoverFilters = leftoverFilters[numClusters:]
-		}
-
 		if channelEmpty {
 			break
 		}
-	}
 
-	return tally
+		barcodeStrings := make([]string, numClusters)
+		for i := 0; i < numClusters; i++ {
+			barcodeStrings[i] = string(barcodes[i])
+		}
+		output <- barcodeStrings
+	}
 }
 
 func clustersToBases(input chan []byte, output chan []byte) {
@@ -204,6 +228,7 @@ func readFilterFile(filename string, output chan []byte) {
 }
 
 func reportOnFileGroups(fileGroups [][]string, filterFiles []string, output chan map[string]Count) {
+	defer close(output)
 
 	clusterComms := make([]chan []byte, len(fileGroups))
 	baseComms := make([]chan []byte, len(fileGroups))
@@ -217,9 +242,15 @@ func reportOnFileGroups(fileGroups [][]string, filterFiles []string, output chan
 
 	go readFilterFiles(filterFiles, filterComm)
 
-	tally := basesToBarcodeMap(baseComms, filterComm)
+	barcodeComm := make(chan []string)
+	syncedBarcodeComm := make(chan []string)
+	syncedFilterComm := make(chan []byte)
+
+	go basesToBarcodes(baseComms, barcodeComm)
+	go syncChannels(barcodeComm, filterComm, syncedBarcodeComm, syncedFilterComm)
+
+	tally := basesToBarcodeMap(syncedBarcodeComm, syncedFilterComm)
 	output <- tally
-	close(output)
 }
 
 func printTally(tally map[string]Count) {
