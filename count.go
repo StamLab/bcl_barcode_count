@@ -14,9 +14,13 @@ const (
 	maxChunksInChannel = 100   // How many chunks to hold at once
 )
 
-func clustersToBarcodeMap(inputs []chan []byte) map[string]int {
-	tally := make(map[string]int)
+func basesToBarcodeMap(inputs []chan []byte, filterChan chan []byte) map[string]Count {
+	tally := make(map[string]Count)
 	barcodeLength := len(inputs)
+
+	// Filter chunk size differs from input chunk size
+	var leftoverFilters []byte
+	var filters []byte
 	for {
 		numClusters := 0
 		barcodes := make([][]byte, readChunkSize)
@@ -24,6 +28,8 @@ func clustersToBarcodeMap(inputs []chan []byte) map[string]int {
 			barcodes[cluster_idx] = make([]byte, barcodeLength)
 		}
 		channelEmpty := false
+
+		// Transpose bases into barcodes
 		for i, c := range inputs {
 			bases, okay := <-c
 			channelEmpty = !okay
@@ -32,11 +38,44 @@ func clustersToBarcodeMap(inputs []chan []byte) map[string]int {
 				barcodes[idx][i] = base
 			}
 		}
+
+		numLeftover := len(leftoverFilters)
+		if numLeftover < numClusters {
+			filters, _ = <-filterChan
+		}
+
+		// This is ugly, and can surely be simplified
+		// Match up incoming clusters with leftover filters
+		bound := numLeftover
+		if numClusters < bound {
+			bound = numClusters
+		}
+
+		for i := 0; i < bound; i++ {
+			bc := string(barcodes[i])
+			count := tally[bc]
+			count.Total++
+			count.Pass += int(leftoverFilters[i])
+			tally[bc] = count
+		}
+		// Match up remaining clusters with new filters
+		for i := bound; i < numClusters; i++ {
+			bc := string(barcodes[i])
+			count := tally[bc]
+			count.Total++
+			count.Pass += int(filters[i-numLeftover])
+			tally[bc] = count
+		}
+
+		// Collect any leftovers
+		if numLeftover < numClusters {
+			leftoverFilters = filters[numClusters-numLeftover:]
+		} else {
+			leftoverFilters = leftoverFilters[numClusters:]
+		}
+
 		if channelEmpty {
 			break
-		}
-		for _, barcode := range barcodes[:numClusters] {
-			tally[string(barcode)]++
 		}
 	}
 
@@ -110,9 +149,14 @@ func bcl_to_clusters(filenames []string, output chan []byte) {
 	close(output)
 }
 
+type Count struct {
+	Total int
+	Pass  int
+}
+
 type Pair struct {
 	Key   string
-	Value int
+	Value Count
 }
 
 // A slice of Pairs that implements sort.Interface to sort by Value.
@@ -120,10 +164,10 @@ type PairList []Pair
 
 func (p PairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 func (p PairList) Len() int           { return len(p) }
-func (p PairList) Less(i, j int) bool { return p[i].Value < p[j].Value }
+func (p PairList) Less(i, j int) bool { return p[i].Value.Total < p[j].Value.Total }
 
 // A function to turn a map into a PairList, then sort and return it.
-func sortMapByValueDescending(m map[string]int) PairList {
+func sortMapByValueDescending(m map[string]Count) PairList {
 	p := make(PairList, len(m))
 	i := 0
 	for k, v := range m {
@@ -134,10 +178,36 @@ func sortMapByValueDescending(m map[string]int) PairList {
 	return p
 }
 
-func reportOnFileGroups(fileGroups [][]string, output chan map[string]int) {
+func readFilterFiles(filenames []string, output chan []byte) {
+	for _, filename := range filenames {
+		readFilterFile(filename, output)
+	}
+	close(output)
+}
+
+func readFilterFile(filename string, output chan []byte) {
+	file, _ := os.Open(filename)
+	defer file.Close()
+
+	debug_info := make([]byte, 12) // Refer to manual for spec
+
+	file.Read(debug_info)
+
+	for {
+		filters := make([]byte, readChunkSize)
+		bytes_read, read_err := file.Read(filters)
+		if read_err != nil || bytes_read == 0 {
+			break
+		}
+		output <- filters[:bytes_read]
+	}
+}
+
+func reportOnFileGroups(fileGroups [][]string, filterFiles []string, output chan map[string]Count) {
 
 	clusterComms := make([]chan []byte, len(fileGroups))
 	baseComms := make([]chan []byte, len(fileGroups))
+	filterComm := make(chan []byte)
 	for i, files := range fileGroups {
 		clusterComms[i] = make(chan []byte, maxChunksInChannel)
 		baseComms[i] = make(chan []byte, maxChunksInChannel)
@@ -145,14 +215,16 @@ func reportOnFileGroups(fileGroups [][]string, output chan map[string]int) {
 		go clustersToBases(clusterComms[i], baseComms[i])
 	}
 
-	tally := clustersToBarcodeMap(baseComms)
+	go readFilterFiles(filterFiles, filterComm)
+
+	tally := basesToBarcodeMap(baseComms, filterComm)
 	output <- tally
 	close(output)
 }
 
-func printTally(tally map[string]int) {
+func printTally(tally map[string]Count) {
 	for _, pair := range sortMapByValueDescending(tally) {
-		fmt.Println(pair.Key, pair.Value)
+		fmt.Println(pair.Key, pair.Value.Total, pair.Value.Pass)
 	}
 }
 
@@ -170,18 +242,19 @@ func main() {
 	maskToIndices(*mask)
 
 	var lanes [][][]string
+	var filters [][]string
 	if *next_seq {
-		lanes = getNextSeqFiles(*mask, *base_dir)
+		lanes, filters = getNextSeqFiles(*mask, *base_dir)
 	} else if *hi_seq {
-		lanes = getHiSeqFiles(*mask, *base_dir)
+		lanes, filters = getHiSeqFiles(*mask, *base_dir)
 	} else {
 		panic("Must specify either --nextseq or --hiseq")
 	}
 
-	tallyComms := make([]chan map[string]int, len(lanes))
+	tallyComms := make([]chan map[string]Count, len(lanes))
 	for l, fileGroups := range lanes {
-		tallyComms[l] = make(chan map[string]int)
-		go reportOnFileGroups(fileGroups, tallyComms[l])
+		tallyComms[l] = make(chan map[string]Count)
+		go reportOnFileGroups(fileGroups, filters[l], tallyComms[l])
 	}
 
 	for l := range lanes {
