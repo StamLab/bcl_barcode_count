@@ -3,15 +3,16 @@ package main
 import (
 	"compress/gzip"
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"sort"
 )
 
 const (
-	readChunkSize      = 40000 // How many reads to grab at a time
-	maxChunksInChannel = 100   // How many chunks to hold at once
+	readChunkSize      = 40000  // How many reads to grab at a time
+	maxChunksInChannel = 100    // How many chunks to hold at once
+	outputThreshold    = 100000 // Don't report barcodes with fewer clusters than this
 )
 
 func Min(a int, b int) int {
@@ -183,25 +184,6 @@ type Pair struct {
 	Value Count
 }
 
-// A slice of Pairs that implements sort.Interface to sort by Value.
-type PairList []Pair
-
-func (p PairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
-func (p PairList) Len() int           { return len(p) }
-func (p PairList) Less(i, j int) bool { return p[i].Value.Total < p[j].Value.Total }
-
-// A function to turn a map into a PairList, then sort and return it.
-func sortMapByValueDescending(m map[string]Count) PairList {
-	p := make(PairList, len(m))
-	i := 0
-	for k, v := range m {
-		p[i] = Pair{k, v}
-		i++
-	}
-	sort.Sort(sort.Reverse(p))
-	return p
-}
-
 func readFilterFiles(filenames []string, output chan []byte) {
 	for _, filename := range filenames {
 		readFilterFile(filename, output)
@@ -253,10 +235,19 @@ func reportOnFileGroups(fileGroups [][]string, filterFiles []string, output chan
 	output <- tally
 }
 
-func printTally(tally map[string]Count) {
-	for _, pair := range sortMapByValueDescending(tally) {
-		fmt.Println(pair.Key, pair.Value.Total, pair.Value.Pass)
+func printTallies(tallies []map[string]Count) {
+	for _, tally := range tallies {
+		for barcode, count := range tally {
+			if count.Total < outputThreshold {
+				delete(tally, barcode)
+			}
+		}
 	}
+	encode, err := json.MarshalIndent(tallies, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	os.Stdout.Write(encode)
 }
 
 func main() {
@@ -288,10 +279,11 @@ func main() {
 		go reportOnFileGroups(fileGroups, filters[l], tallyComms[l])
 	}
 
+	tallies := make([]map[string]Count, len(lanes))
 	for l := range lanes {
-		fmt.Printf("----Lane %d-----\n", l+1)
-		tally := <-tallyComms[l]
-		printTally(tally)
+		tallies[l] = <-tallyComms[l]
 	}
+
+	printTallies(tallies)
 
 }
