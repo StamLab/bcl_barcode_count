@@ -42,15 +42,15 @@ func getNextSeqFiles(mask string, basedir string) ([][][]string, [][]string) {
 	files := make([][]string, len(cycles))
 	filters := make([]string, NextSeqLanes)
 
-	for l := 1; l <= NextSeqLanes; l++ {
-		lane := fmt.Sprintf("L%03d", l)
+	for l := 0; l < NextSeqLanes; l++ {
+		lane := fmt.Sprintf("L%03d", l+1)
 		for i, c := range cycles {
 			cycleFile := fmt.Sprintf("%04d.bcl.bgzf", c)
 			file := filepath.Join(basedir, "Data", "Intensities", "BaseCalls", lane, cycleFile)
 			files[i] = append(files[i], file)
 
 		}
-		filterFile := fmt.Sprintf("s_%d", l)
+		filterFile := fmt.Sprintf("s_%d.filter", l+1)
 		filters[l] = filepath.Join(basedir, "Data", "Intensities", "BaseCalls", lane, filterFile)
 	}
 	return [][][]string{files}, [][]string{filters}
