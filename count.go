@@ -235,15 +235,29 @@ func reportOnFileGroups(fileGroups [][]string, filterFiles []string, output chan
 	output <- tally
 }
 
-func printTallies(tallies []map[string]Count) {
-	for _, tally := range tallies {
-		for barcode, count := range tally {
+type Lane struct {
+	LaneIndex int
+	Total     int
+	Pass      int
+	Counts    map[string]Count
+}
+
+type Output struct {
+	Sequencer string
+	BaseDir   string
+	Mask      string
+	Lanes     []Lane
+}
+
+func printTallies(output Output) {
+	for _, lane := range output.Lanes {
+		for barcode, count := range lane.Counts {
 			if count.Total < outputThreshold {
-				delete(tally, barcode)
+				delete(lane.Counts, barcode)
 			}
 		}
 	}
-	encode, err := json.MarshalIndent(tallies, "", "  ")
+	encode, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
 		panic(err)
 	}
@@ -263,27 +277,37 @@ func main() {
 
 	maskToIndices(*mask)
 
-	var lanes [][][]string
+	var sequencer string
+	var laneFiles [][][]string
 	var filters [][]string
 	if *next_seq {
-		lanes, filters = getNextSeqFiles(*mask, *base_dir)
+		laneFiles, filters = getNextSeqFiles(*mask, *base_dir)
+		sequencer = "NextSeq"
 	} else if *hi_seq {
-		lanes, filters = getHiSeqFiles(*mask, *base_dir)
+		laneFiles, filters = getHiSeqFiles(*mask, *base_dir)
+		sequencer = "HiSeq"
 	} else {
 		panic("Must specify either --nextseq or --hiseq")
 	}
 
-	tallyComms := make([]chan map[string]Count, len(lanes))
-	for l, fileGroups := range lanes {
+	tallyComms := make([]chan map[string]Count, len(laneFiles))
+	for l, fileGroups := range laneFiles {
 		tallyComms[l] = make(chan map[string]Count)
 		go reportOnFileGroups(fileGroups, filters[l], tallyComms[l])
 	}
 
-	tallies := make([]map[string]Count, len(lanes))
+	lanes := make([]Lane, len(laneFiles))
 	for l := range lanes {
-		tallies[l] = <-tallyComms[l]
+		tally := <-tallyComms[l]
+		lane := Lane{l + 1, 0, 0, tally}
+		for _, count := range tally {
+			lane.Total += count.Total
+			lane.Pass += count.Pass
+		}
+		lanes[l] = lane
 	}
 
-	printTallies(tallies)
+	output := Output{sequencer, *base_dir, *mask, lanes}
+	printTallies(output)
 
 }
