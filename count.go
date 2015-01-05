@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	readChunkSize      = 40000  // How many reads to grab at a time
-	maxChunksInChannel = 100    // How many chunks to hold at once
-	outputThreshold    = 100000 // Don't report barcodes with fewer clusters than this
+	readChunkSize      = 40000   // How many reads to grab at a time
+	maxChunksInChannel = 100     // How many chunks to hold at once
+	outputThreshold    = 1000000 // Don't report barcodes with fewer clusters than this
 )
 
 func Min(a int, b int) int {
