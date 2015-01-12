@@ -10,9 +10,8 @@ import (
 )
 
 const (
-	readChunkSize      = 40000   // How many reads to grab at a time
-	maxChunksInChannel = 100     // How many chunks to hold at once
-	outputThreshold    = 1000000 // Don't report barcodes with fewer clusters than this
+	readChunkSize      = 40000 // How many reads to grab at a time
+	maxChunksInChannel = 100   // How many chunks to hold at once
 )
 
 func Min(a int, b int) int {
@@ -249,7 +248,7 @@ type Output struct {
 	Lanes     []Lane
 }
 
-func printTallies(output Output) {
+func printTallies(output Output, outputThreshold int) {
 	for _, lane := range output.Lanes {
 		for barcode, count := range lane.Counts {
 			if count.Total < outputThreshold {
@@ -272,6 +271,7 @@ func main() {
 	hi_seq := flag.Bool("hiseq", false, "This is a HiSeq flowcell")
 	base_dir := flag.String("base", currentDir, "The base directory of the flowcell")
 	mask := flag.String("mask", currentDir, "The bases mask to use for the flowcell")
+	outputThreshold := flag.Int("threshold", 1000000, "Don't report below this threshold")
 
 	flag.Parse()
 
@@ -308,6 +308,6 @@ func main() {
 	}
 
 	output := Output{sequencer, *base_dir, *mask, lanes}
-	printTallies(output)
+	printTallies(output, *outputThreshold)
 
 }
