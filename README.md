@@ -7,7 +7,7 @@ Usage
 =====
 
 1. Navigate to the base flowcell directory.
-2. `barcode_count --nextseq --mask=y36,i6n,y36 > barcodes.json`
+2. `bcl_barcode_count --nextseq --mask=y36,i6n,y36 > barcodes.json`
 
 Substitute `--nextseq`/`--hiseq` and the bases mask accordingly.
 
