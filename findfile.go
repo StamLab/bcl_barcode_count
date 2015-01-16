@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -74,4 +75,46 @@ func getHiSeqFiles(mask string, basedir string) ([][][]string, [][]string) {
 	}
 
 	return files, filterFiles
+}
+
+func isHiSeqReady(mask string, basedir string) bool {
+	read_masks := strings.Split(strings.ToLower(mask), ",")
+	last_index_read := 1
+	for idx, m := range read_masks {
+		if strings.Contains(m, "i") {
+			last_index_read = idx + 1
+		}
+	}
+
+	filename := fmt.Sprintf("Basecalling_Netcopy_complete_Read%d.txt", last_index_read)
+	_, err := os.Stat(filepath.Join(basedir, filename))
+
+	return (err == nil)
+}
+
+// This is more complicated
+// For now, just check to see if all inputs exist.
+func isNextSeqReady(bclFiles [][][]string, filterFiles [][]string) bool {
+
+	for i := range bclFiles {
+		for j := range bclFiles[i] {
+			for _, file := range bclFiles[i][j] {
+				stat, err := os.Stat(file)
+				if err != nil || stat.Size() == 0 {
+					return false
+				}
+			}
+		}
+	}
+
+	for i := range filterFiles {
+		for _, file := range filterFiles[i] {
+			stat, err := os.Stat(file)
+			if err != nil || stat.Size() == 0 {
+				return false
+			}
+		}
+	}
+
+	return true
 }

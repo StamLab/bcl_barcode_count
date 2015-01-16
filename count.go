@@ -10,6 +10,7 @@ import (
 )
 
 const (
+	progVersion        = 0.1   // What version of the program to report
 	readChunkSize      = 40000 // How many reads to grab at a time
 	maxChunksInChannel = 100   // How many chunks to hold at once
 )
@@ -267,6 +268,8 @@ func main() {
 
 	currentDir, _ := os.Getwd()
 
+	sayVersion := flag.Bool("version", false, "Output version info and exit")
+	checkReady := flag.Bool("isready", false, "Only check if the files are ready to be processed")
 	next_seq := flag.Bool("nextseq", false, "This is a NextSeq 500 flowcell")
 	hi_seq := flag.Bool("hiseq", false, "This is a HiSeq flowcell")
 	base_dir := flag.String("base", currentDir, "The base directory of the flowcell")
@@ -275,19 +278,39 @@ func main() {
 
 	flag.Parse()
 
+	if *sayVersion {
+		fmt.Println("Version: ", progVersion)
+		os.Exit(0)
+	}
+
 	maskToIndices(*mask)
 
 	var sequencer string
 	var laneFiles [][][]string
 	var filters [][]string
+	var isReady bool
+
 	if *next_seq {
 		laneFiles, filters = getNextSeqFiles(*mask, *base_dir)
+		isReady = isNextSeqReady(laneFiles, filters)
 		sequencer = "NextSeq"
 	} else if *hi_seq {
+		isReady = isHiSeqReady(*mask, *base_dir)
+
 		laneFiles, filters = getHiSeqFiles(*mask, *base_dir)
 		sequencer = "HiSeq"
 	} else {
 		panic("Must specify either --nextseq or --hiseq")
+	}
+
+	if isReady {
+		if *checkReady {
+			fmt.Println("Ready to process")
+			os.Exit(0)
+		}
+	} else {
+		fmt.Println("Not yet ready to process!")
+		os.Exit(1)
 	}
 
 	tallyComms := make([]chan map[string]Count, len(laneFiles))
