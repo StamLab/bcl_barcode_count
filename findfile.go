@@ -77,6 +77,41 @@ func getHiSeqFiles(mask string, basedir string) ([][][]string, [][]string) {
 	return files, filterFiles
 }
 
+func getHiSeq4kFiles(mask string, basedir string) ([][][]string, [][]string) {
+	cycles := maskToIndices(mask)
+	files := make([][][]string, HiSeqLanes)
+	filterFiles := make([][]string, HiSeqLanes)
+
+	for l := 0; l < HiSeqLanes; l++ {
+		lane := fmt.Sprintf("L%03d", l+1)
+		files[l] = make([][]string, len(cycles))
+		for i, c := range cycles {
+			cycleDir := fmt.Sprintf("C%d.1", c)
+			fileglob := filepath.Join(basedir, "Data", "Intensities", "BaseCalls", lane, cycleDir, "s_*.bcl.gz")
+			files[l][i], _ = filepath.Glob(fileglob)
+		}
+		filterGlob := filepath.Join(basedir, "Data", "Intensities", "BaseCalls", lane, "s_*.filter")
+		filterFiles[l], _ = filepath.Glob(filterGlob)
+	}
+
+	return files, filterFiles
+}
+
+func isHiSeq4kReady(mask string, basedir string) bool {
+	read_masks := strings.Split(strings.ToLower(mask), ",")
+	last_index_read := 1
+	for idx, m := range read_masks {
+		if strings.Contains(m, "i") {
+			last_index_read = idx + 1
+		}
+	}
+
+	filename := fmt.Sprintf("RTARead%dComplete.txt", last_index_read)
+	_, err := os.Stat(filepath.Join(basedir, filename))
+
+	return (err == nil)
+}
+
 func isHiSeqReady(mask string, basedir string) bool {
 	read_masks := strings.Split(strings.ToLower(mask), ",")
 	last_index_read := 1

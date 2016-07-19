@@ -271,9 +271,10 @@ func main() {
 	sayVersion := flag.Bool("version", false, "Output version info and exit")
 	checkReady := flag.Bool("isready", false, "Only check if the files are ready to be processed")
 	next_seq := flag.Bool("nextseq", false, "This is a NextSeq 500 flowcell")
-	hi_seq := flag.Bool("hiseq", false, "This is a HiSeq flowcell")
+	hi_seq := flag.Bool("hiseq", false, "This is a HiSeq 2500 flowcell")
+	hi_seq_4k := flag.Bool("hiseq4k", false, "This is a HiSeq 4000 flowcell")
 	base_dir := flag.String("base", currentDir, "The base directory of the flowcell")
-	mask := flag.String("mask", currentDir, "The bases mask to use for the flowcell")
+	mask := flag.String("mask", "y36,i8,i8,y36", "The bases mask to use for the flowcell")
 	outputThreshold := flag.Int("threshold", 1000000, "Don't report below this threshold")
 
 	flag.Parse()
@@ -299,6 +300,12 @@ func main() {
 
 		laneFiles, filters = getHiSeqFiles(*mask, *base_dir)
 		sequencer = "HiSeq"
+	} else if *hi_seq_4k {
+		isReady = isHiSeq4kReady(*mask, *base_dir)
+
+		laneFiles, filters = getHiSeq4kFiles(*mask, *base_dir)
+		sequencer = "HiSeq 4000"
+
 	} else {
 		panic("Must specify either --nextseq or --hiseq")
 	}
