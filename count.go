@@ -270,6 +270,7 @@ func main() {
 
 	sayVersion := flag.Bool("version", false, "Output version info and exit")
 	checkReady := flag.Bool("isready", false, "Only check if the files are ready to be processed")
+	mini_seq := flag.Bool("miniseq", false, "This is a MiniSeq flowcell")
 	next_seq := flag.Bool("nextseq", false, "This is a NextSeq 500 flowcell")
 	hi_seq := flag.Bool("hiseq", false, "This is a HiSeq 2500 flowcell")
 	hi_seq_4k := flag.Bool("hiseq4k", false, "This is a HiSeq 4000 flowcell")
@@ -306,8 +307,12 @@ func main() {
 		laneFiles, filters = getHiSeq4kFiles(*mask, *base_dir)
 		sequencer = "HiSeq 4000"
 
+	} else if *mini_seq {
+	       laneFiles, filters = getMiniSeqFiles(*mask, *base_dir)
+	       isReady = isNextSeqReady(laneFiles,filters)
+	       sequencer = "MiniSeq"
 	} else {
-		panic("Must specify either --nextseq or --hiseq")
+		panic("Must specify either --nextseq or --hiseq or --miniseq")
 	}
 
 	if isReady {

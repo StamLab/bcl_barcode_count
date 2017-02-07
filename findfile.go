@@ -10,6 +10,7 @@ import (
 )
 
 const (
+	MiniSeqLanes = 1
 	NextSeqLanes = 4
 	HiSeqLanes   = 8
 )
@@ -55,6 +56,25 @@ func getNextSeqFiles(mask string, basedir string) ([][][]string, [][]string) {
 		filters[l] = filepath.Join(basedir, "Data", "Intensities", "BaseCalls", lane, filterFile)
 	}
 	return [][][]string{files}, [][]string{filters}
+}
+
+func getMiniSeqFiles(mask string, basedir string) ([][][]string, [][]string) {
+        cycles := maskToIndices(mask)
+        files := make([][]string, len(cycles))
+        filters := make([]string, MiniSeqLanes)
+
+        for l := 0; l < MiniSeqLanes; l++ {
+                lane := fmt.Sprintf("L%03d", l+1)
+                for i, c := range cycles {
+                        cycleFile := fmt.Sprintf("%04d.bcl.bgzf", c)
+                        file := filepath.Join(basedir, "Data", "Intensities", "BaseCalls", lane, cycleFile)
+                        files[i] = append(files[i], file)
+
+                }
+                filterFile := fmt.Sprintf("s_%d.filter", l+1)
+                filters[l] = filepath.Join(basedir, "Data", "Intensities", "BaseCalls", lane, filterFile)
+        }
+        return [][][]string{files}, [][]string{filters}
 }
 
 func getHiSeqFiles(mask string, basedir string) ([][][]string, [][]string) {
