@@ -6,15 +6,20 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"strings"
+	// import "github.com/google/readahead"
+	"github.com/google/readahead"
 )
 
 const (
-	progVersion        = 0.1   // What version of the program to report
+	progVersion        = 0.3   // What version of the program to report
 	readChunkSize      = 40000 // How many reads to grab at a time
 	maxChunksInChannel = 100   // How many chunks to hold at once
 )
 
+// Min returns the minimum of two integers
 func Min(a int, b int) int {
 	if a < b {
 		return a
@@ -107,6 +112,12 @@ func basesToBarcodes(inputs []chan []byte, output chan []string) {
 	}
 }
 
+// For each byte:
+// if all 0: N
+// 0bXXXXXX00 -> A
+// 0bXXXXXX01 -> C
+// 0bXXXXXX10 -> G
+// 0bXXXXXX11 -> T
 func clustersToBases(input chan []byte, output chan []byte) {
 	decode := [4]byte{'A', 'C', 'G', 'T'}
 	for {
@@ -127,6 +138,166 @@ func clustersToBases(input chan []byte, output chan []byte) {
 
 	}
 	close(output)
+}
+
+func assert(cond bool, reason string) {
+	if !cond {
+		panic(reason)
+	}
+}
+
+type QvalMapInfo struct {
+	binCount uint32
+	binMap   map[uint32]uint32
+}
+
+type CblcHeaderStart struct {
+	Version         uint16
+	HeaderSize      uint32
+	BitsPerBaseCall uint8
+	BitsPerQScore   uint8
+}
+
+type TileInfo struct {
+	TileNum          uint32
+	ClusterCount     uint32
+	UncompressedSize uint32
+	CompressedSize   uint32
+	//ExcludeNonPF     uint32 // Is this the right size??
+}
+
+type CblcHeader struct {
+	start     CblcHeaderStart
+	qvalInfo  QvalMapInfo
+	tileCount uint32
+	tiles     []TileInfo
+}
+
+func cbclFileToClusters(filename string, output chan []byte) {
+	file, err := os.Open(filename)
+	defer file.Close()
+	if err != nil {
+		panic(err)
+	}
+
+	binRead := func(dest interface{}) {
+		err := binary.Read(file, binary.LittleEndian, dest)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	// Read Header
+	/*
+		Bytes 0–1 Version number, current version is 1 unsigned 16 bits little endian integer
+		Bytes 2–5 Header size unsigned 32 bits little endian integer
+		Byte 6 Number of bits per base call unsigned
+		Byte 7 Number of bits per q-score unsigned
+		q-val mapping info
+		Bytes 0–3 Number of bins (B), zero indicates no
+		mapping
+		B pairs of 4 byte values (if B > 0) {from, to}, {from, to}, {from, to} …
+		from: quality score bin
+		to: quality score
+		Number of tile records unsigned 32 bits little endian integer
+	*/
+
+	header := CblcHeader{}
+	binRead(&(header.start))
+
+	header.qvalInfo.binMap = make(map[uint32]uint32)
+	binRead(&header.qvalInfo.binCount)
+	for i := uint32(0); i < header.qvalInfo.binCount; i++ {
+		var from, to uint32
+		binRead(&from)
+		binRead(&to)
+		header.qvalInfo.binMap[from] = to
+	}
+
+	binRead(&(header.tileCount))
+
+	for i := uint32(0); i < header.tileCount; i++ {
+		info := TileInfo{}
+		binRead(&info)
+		header.tiles = append(header.tiles, info)
+	}
+
+	assert(header.start.Version == 1, "cbcl version != 1")
+
+	// Read the data!!!!
+	offset := int64(header.start.HeaderSize)
+	for _, tile := range header.tiles {
+		// TODO: Work with variable bit lengths
+		assert(header.start.BitsPerBaseCall == 2, "Error: not 2 bits per call")
+		assert(header.start.BitsPerQScore == 2, "Error: not 2 bits per qscore")
+
+		sr := io.NewSectionReader(file, offset, int64(tile.CompressedSize))
+		err = cbclReadTile(sr, output)
+		if err != nil {
+			panic(fmt.Errorf("Error in %s: %s", filename, err))
+		}
+
+		offset += int64(tile.CompressedSize)
+	}
+}
+
+// Slow and steady for v0
+func cbclReadTile(sr io.Reader, output chan<- []byte) error {
+	reader, gzipErr := gzip.NewReader(sr)
+	if gzipErr != nil {
+		return gzipErr
+	}
+	defer reader.Close()
+
+	assert(readChunkSize%2 == 0, "read chunk size must be even")
+	cc := readahead.NewReader("cbcl-reader-X", reader, readChunkSize/2, 1)
+	defer cc.Close()
+
+	for {
+		clusters := make([]byte, readChunkSize)
+
+		var b uint8
+		for i := 0; i < len(clusters); i += 2 {
+			err := binary.Read(cc, binary.LittleEndian, &b)
+			if err == io.EOF {
+				if i >= 2 {
+					clusters = clusters[:i-2]
+				} else {
+					clusters = clusters[:i]
+				}
+				output <- clusters
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+
+			// Algorithm:
+			// For each of the 4-bit clusters, check:
+			// Does quality == 0? if so -> 0
+			// Otherwise -> send (128 | base), to make sure it's non-zero
+
+			// Format:
+			//   Q2B2Q1B1
+			// 0b00000011 -> 1 + 2    = 3
+			// 0b00001100 -> 8+4      = 12
+			// 0b11000000 -> 128 + 64 = 196
+
+			// Lower bits are first base
+			if b&12 != 0 {
+				clusters[i] = 128 | (b & 3)
+			} else {
+				clusters[i] = 0
+			}
+			// Upper bits are second base
+			if b&196 != 0 {
+				clusters[i+1] = 128 | ((b >> 4) & 3)
+			} else {
+				clusters[i+1] = 0
+			}
+		}
+		output <- clusters
+	}
 }
 
 func bclFileToClusters(filename string, output chan []byte) {
@@ -166,9 +337,12 @@ func bclFileToClusters(filename string, output chan []byte) {
 }
 
 func bcl_to_clusters(filenames []string, output chan []byte) {
-
 	for _, filename := range filenames {
-		bclFileToClusters(filename, output)
+		if strings.HasSuffix(filename, ".cbcl") {
+			cbclFileToClusters(filename, output)
+		} else {
+			bclFileToClusters(filename, output)
+		}
 	}
 
 	close(output)
@@ -274,6 +448,7 @@ func main() {
 	next_seq := flag.Bool("nextseq", false, "This is a NextSeq 500 flowcell")
 	hi_seq := flag.Bool("hiseq", false, "This is a HiSeq 2500 flowcell")
 	hi_seq_4k := flag.Bool("hiseq4k", false, "This is a HiSeq 4000 flowcell")
+	novaseq := flag.Bool("novaseq", false, "This is a NovaSeq flowcell")
 	base_dir := flag.String("base", currentDir, "The base directory of the flowcell")
 	mask := flag.String("mask", "y36,i8,i8,y36", "The bases mask to use for the flowcell")
 	outputThreshold := flag.Int("threshold", 1000000, "Don't report below this threshold")
@@ -308,9 +483,13 @@ func main() {
 		sequencer = "HiSeq 4000"
 
 	} else if *mini_seq {
-	       laneFiles, filters = getMiniSeqFiles(*mask, *base_dir)
-	       isReady = isNextSeqReady(laneFiles,filters)
-	       sequencer = "MiniSeq"
+		laneFiles, filters = getMiniSeqFiles(*mask, *base_dir)
+		isReady = isNextSeqReady(laneFiles, filters)
+		sequencer = "MiniSeq"
+	} else if *novaseq {
+		laneFiles, filters = getNovaSeqFiles(*mask, *base_dir)
+		isReady = isNovaSeqReady(*mask, *base_dir)
+		sequencer = "NovaSeq"
 	} else {
 		panic("Must specify either --nextseq or --hiseq or --miniseq")
 	}
